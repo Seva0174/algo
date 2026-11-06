@@ -3,6 +3,8 @@
 * Vsevolod Giovanni CINQUE
 * Jughurta MEHENNI
 * Mohamed-Amine BENCKACEM
+* Jayden TAN
+* yuhsaku NAKAI
 
 ## Language : Python
 
