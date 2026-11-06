@@ -4,7 +4,7 @@
 * Jughurta MEHENNI
 * Mohamed-Amine BENCKACEM
 * Jayden TAN
-* yuhsaku NAKAI
+* Yuhsaku NAKAI
 
 ## Language : Python
 
