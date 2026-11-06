@@ -86,8 +86,9 @@ def load(path: str) -> Instance:
         return int(tokens[pos - 1])
 
     n, m = nxt(), nxt()
-    for _ in range(m):  # coûts : ignorés (unicost)
-        nxt()
+    for _ in range(m):  # coûts : on vérifie qu'ils valent tous 1 (unicost)
+        if nxt() != 1:
+            raise ValueError(f"{path} : instance pondérée (coût != 1), pas unicost")
 
     subsets: list[set[int]] = [set() for _ in range(m)]
     for e in range(n):
@@ -95,3 +96,41 @@ def load(path: str) -> Instance:
             subsets[nxt() - 1].add(e)
 
     return Instance(n, m, subsets)
+
+
+def load_steiner(path: str) -> Instance:
+    """Charge une instance Steiner Triple Covering (fichiers data.*).
+
+    Format du fichier (indices 1-based) :
+
+        nb_variables nb_triplets     # attention : colonnes AVANT lignes
+        a b c                        # un triplet par ligne = un élément à couvrir,
+        ...                          # couvert par les sous-ensembles a, b et c
+
+    Les triplets sont les éléments de l'univers, les variables sont les
+    sous-ensembles. Pas de ligne de coûts : tout vaut 1.
+    """
+    with open(path) as f:
+        tokens = [int(t) for t in f.read().split()]
+    m, n = tokens[0], tokens[1]          # m sous-ensembles, n éléments
+    if len(tokens) != 2 + 3 * n:
+        raise ValueError(f"{path} : nombre de triplets incohérent")
+
+    subsets: list[set[int]] = [set() for _ in range(m)]
+    for e in range(n):
+        for j in tokens[2 + 3 * e: 5 + 3 * e]:
+            subsets[j - 1].add(e)
+
+    return Instance(n, m, subsets)
+
+
+def load_any(path: str) -> Instance:
+    """Choisit le bon parseur selon le nom du fichier.
+
+    - data.*  (dossier steiner-triple-covering) -> load_steiner
+    - le reste (scp*.txt de l'OR-Library)       -> load
+    """
+    import os
+    if os.path.basename(path).startswith("data."):
+        return load_steiner(path)
+    return load(path)
