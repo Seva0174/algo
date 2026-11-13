@@ -13,6 +13,7 @@ import os
 import sys
 import time
 
+from best_known import best_known
 from instance import load_any
 
 # Dossier des instances, relatif à ce fichier : ALGO/USPC-instances
@@ -41,10 +42,12 @@ def tester(path: str) -> bool:
         and inst.is_cover(range(inst.m))         # prendre tout = une couverture
     )
     taille_moy = sum(len(s) for s in inst.subsets) / inst.m
+    valeur, optimal = best_known(path) or ("?", False)
+    ref_txt = f"ref={valeur}{'*' * optimal}"
     print(
         f"{os.path.basename(path):<14} n={inst.n:>7}  m={inst.m:>6}  "
         f"|S| moyen={taille_moy:6.1f}  chargé en {duree:5.2f}s  "
-        f"{'OK' if ok else 'ERREUR'}"
+        f"{ref_txt:<9} {'OK' if ok else 'ERREUR'}"
     )
     return ok
 
