@@ -29,7 +29,9 @@ data.81    : stn81     :   81   :  1080
 data.135   : stn135    :  135   :  3015   
 data.243   : stn243    :  243   :  9801   
 data.405   : stn405    :  405   : 27270   
-data.729   : stn729    :  729   : 88452   
+data.729   : stn729    :  729   : 88452
+data.1215  : stn1215   : 1215   : 245835  
+data.2187  : stn2187   : 2187   : 796797  
 
 The file format is:
 
@@ -48,4 +50,6 @@ stn135    : 103  optimal (Ostrowski et al., 2009, 2010)
 stn243    : 198  optimal (Ostrowski et al., 2009, 2010)
 stn405    : 335  BKS     (Resende & Toso, 2010)
 stn729    : 617  BKS     (Resende & Toso, 2010)
+stn1215   : 1063 BKS     
+stn2187   : 1963 BKS     
 
