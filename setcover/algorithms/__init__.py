@@ -5,10 +5,10 @@ Chaque nouveau module d'algorithme doit être importé ici pour que son
 """
 
 from .base import (REGISTRY, Algorithm, RunContext, TimeLimitExceeded,
-                   available, get_algorithm, register)
-from . import example  # noqa: F401  (registers "example")
+                    available, get_algorithm, register)
+from . import example  # enregistre "example"
+from . import bruteforce  # enregistre "bruteforce"
 # from . import greedy
-# from . import bruteforce
 # from . import branch_and_bound
 # from . import dynamic_programming
 

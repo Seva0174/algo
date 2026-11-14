@@ -1,9 +1,9 @@
-"""Interface commune à tous les algorithmes.
+"""Base commune à tous les algorithmes.
 
 Pour ajouter un algorithme :
 
-1. créer un fichier dans ``setcover/algorithms/`` (ex. ``bruteforce.py``) ;
-2. écrire une classe qui hérite de ``Algorithm`` et la décorer avec ``@register`` ;
+1. créer un fichier dans ``setcover/algorithms/`` (ex. ``greedy.py``) ;
+2. écrire une classe qui hérite de ``Algorithm`` et mettre ``@register`` au-dessus ;
 3. l'importer dans ``setcover/algorithms/__init__.py``.
 
 Exemple minimal ::
@@ -11,37 +11,24 @@ Exemple minimal ::
     @register
     class TakeAll(Algorithm):
         name = "take-all"
-        exact = False
 
         def solve(self, instance, ctx):
             return list(range(instance.m))
 
-Elle est alors utilisable partout : ``python -m setcover solve -a take-all E.1``.
-
 Ce que reçoit ``solve`` :
-  * ``instance`` : l'``Instance`` (immuable) ;
-  * ``ctx`` : un ``RunContext`` qui donne la graine / le générateur aléatoire,
-    la limite de temps (``ctx.check_time()`` à appeler régulièrement dans les
-    boucles longues), un dictionnaire ``ctx.stats`` pour les compteurs
-    (nœuds explorés, itérations...) et ``ctx.improve(sol)`` pour signaler la
-    meilleure solution trouvée jusqu'ici.
+  * ``instance`` : l'instance à résoudre (à ne pas modifier) ;
+  * ``ctx`` : un ``RunContext`` qui contient
+      - ``ctx.rng``          : générateur aléatoire (pour les algos aléatoires) ;
+      - ``ctx.check_time()`` : à appeler dans les boucles longues ;
+      - ``ctx.stats``        : dictionnaire pour vos compteurs (nœuds explorés...) ;
+      - ``ctx.improve(sol)`` : pour signaler la meilleure solution trouvée.
 
-Ce que renvoie ``solve`` : les indices (0-based) des sous-ensembles choisis.
-Le chronométrage et la vérification sont faits à l'extérieur (``runner``),
-de la même façon pour tous les algorithmes.
-
-Paramètres : ``get_algorithm("grasp", alpha=0.3)`` appelle ``__init__`` avec
-``alpha=0.3`` ; on les retrouve dans ``self.params`` et dans les CSV.
+Ce que renvoie ``solve`` : la liste des indices (0-based) des sous-ensembles
+choisis. Le chronométrage et la vérification sont faits par le runner.
 """
-
-from __future__ import annotations
 
 import random
 import time
-from abc import ABC, abstractmethod
-from typing import ClassVar, Iterable
-
-from ..instance import Instance
 
 
 class TimeLimitExceeded(Exception):
@@ -49,83 +36,64 @@ class TimeLimitExceeded(Exception):
 
 
 class RunContext:
-    def __init__(self, time_limit: float | None = None, seed: int = 0):
-        self.time_limit = time_limit            # secondes, None = pas de limite
+    def __init__(self, time_limit=None, seed=0):
+        self.time_limit = time_limit        # en secondes, None = pas de limite
         self.seed = seed
-        self.rng = random.Random(seed)          # à utiliser pour tout tirage aléatoire
-        self.stats: dict = {}                   # compteurs libres, recopiés dans les résultats
-        self.best: list[int] | None = None      # meilleure solution signalée via improve()
-        self.trace: list[tuple[float, int]] = []  # (temps, coût) à chaque amélioration
-        self._start = time.perf_counter()
+        self.rng = random.Random(seed)      # à utiliser pour tout tirage aléatoire
+        self.stats = {}                     # compteurs libres
+        self.best = None                    # meilleure solution signalée via improve()
+        self.start = time.perf_counter()
 
-    def elapsed(self) -> float:
-        return time.perf_counter() - self._start
+    def elapsed(self):
+        """Temps écoulé depuis le début, en secondes."""
+        return time.perf_counter() - self.start
 
-    def time_left(self) -> float:
-        if self.time_limit is None:
-            return float("inf")
-        return self.time_limit - self.elapsed()
-
-    def check_time(self) -> None:
-        """À appeler dans les boucles : interrompt l'algorithme si le temps est écoulé."""
+    def check_time(self):
+        """À appeler dans les boucles : arrête l'algorithme si le temps est écoulé."""
         if self.time_limit is not None and self.elapsed() > self.time_limit:
             raise TimeLimitExceeded()
 
-    def improve(self, selected: Iterable[int]) -> bool:
-        """Enregistre ``selected`` si elle est meilleure que la précédente.
+    def improve(self, selected):
+        """Garde ``selected`` si elle est meilleure (plus petite) que la précédente.
 
-        Utile pour les méthodes exactes ou les métaheuristiques : si la limite
-        de temps est atteinte, le runner renvoie quand même cette solution.
-        L'appelant doit s'assurer que ``selected`` est une couverture valide
-        (elle sera de toute façon revérifiée par le runner).
+        Si la limite de temps est atteinte, le runner renverra quand même
+        cette meilleure solution.
         """
-        sel = list(selected)
-        if self.best is None or len(sel) < len(self.best):
-            self.best = sel
-            self.trace.append((self.elapsed(), len(sel)))
-            return True
-        return False
+        selected = list(selected)
+        if self.best is None or len(selected) < len(self.best):
+            self.best = selected
 
 
-class Algorithm(ABC):
-    name: ClassVar[str] = "abstract"   # identifiant utilisé en ligne de commande
-    exact: ClassVar[bool] = False      # True si l'algorithme garantit l'optimum
+class Algorithm:
+    name = "abstract"       # identifiant utilisé en ligne de commande
+    exact = False           # True si l'algorithme garantit l'optimum
 
-    def __init__(self, **params):
-        self.params = params
-
-    @abstractmethod
-    def solve(self, instance: Instance, ctx: RunContext) -> Iterable[int]:
+    def solve(self, instance, ctx):
         """Renvoie les indices (0-based) des sous-ensembles choisis."""
-
-    @property
-    def label(self) -> str:
-        """Nom + paramètres, ex. ``grasp(alpha=0.3)``."""
-        if not self.params:
-            return self.name
-        args = ",".join(f"{k}={v}" for k, v in sorted(self.params.items()))
-        return f"{self.name}({args})"
+        raise NotImplementedError("solve() doit être écrite dans la sous-classe")
 
 
 # ---------------------------------------------------------------------- #
-# Registre des algorithmes
+# Registre : dictionnaire  nom -> classe
 # ---------------------------------------------------------------------- #
-REGISTRY: dict[str, type[Algorithm]] = {}
+REGISTRY = {}
 
 
-def register(cls: type[Algorithm]) -> type[Algorithm]:
+def register(cls):
+    """Décorateur : ajoute la classe au registre sous son ``name``."""
     if cls.name in REGISTRY:
         raise ValueError(f"algorithme '{cls.name}' déjà enregistré")
     REGISTRY[cls.name] = cls
     return cls
 
 
-def get_algorithm(name: str, **params) -> Algorithm:
-    try:
-        return REGISTRY[name](**params)
-    except KeyError:
-        raise KeyError(f"algorithme inconnu '{name}', disponibles : {sorted(REGISTRY)}") from None
+def get_algorithm(name):
+    """Crée un objet de l'algorithme enregistré sous ``name``."""
+    if name not in REGISTRY:
+        raise KeyError(f"algorithme inconnu '{name}', disponibles : {available()}")
+    return REGISTRY[name]()
 
 
-def available() -> list[str]:
+def available():
+    """Liste triée des noms d'algorithmes disponibles."""
     return sorted(REGISTRY)

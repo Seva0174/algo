@@ -1,31 +1,27 @@
-"""AlgoExemple: the smallest possible algorithm, to show how the base works.
+"""Exemple : le plus petit algorithme possible.
 
-It contains NO set cover logic: it simply selects every subset. This is
-always a valid cover when the instance is feasible, but never a good one.
-Copy this file to start a new algorithm (see DOCUMENTATION.md, section 5).
+Il ne contient aucune logique de set cover : il choisit tous les sous-ensembles.
+C'est toujours une couverture valide (si l'instance est faisable), mais jamais
+une bonne. Copiez ce fichier pour démarrer un nouvel algorithme.
 
-Run it:
+Lancer :
     python -m setcover solve -a example E.1
 """
 
-from __future__ import annotations
-
-from ..instance import Instance
-from .base import Algorithm, RunContext, register
+from .base import Algorithm, register
 
 
-@register                       # 1. register the class -> usable as "-a example"
-class AlgoExemple(Algorithm):   # 2. inherit from Algorithm
-    name = "example"            # 3. identifier used on the command line / in the CSV
-    exact = False               # 4. True only if the algorithm guarantees the optimum
+@register                       # 1. enregistre la classe -> utilisable avec "-a example"
+class AlgoExemple(Algorithm):   # 2. on hérite de Algorithm
+    name = "example"            # 3. identifiant en ligne de commande
+    exact = False               # 4. True seulement si l'optimum est garanti
 
-    def solve(self, instance: Instance, ctx: RunContext) -> list[int]:
-        # 5. receive the instance (read-only) and the run context
+    def solve(self, instance, ctx):
         selected = []
         for j in range(instance.m):
-            ctx.check_time()                 # stops cleanly if --time-limit is exceeded
+            ctx.check_time()            # s'arrête proprement si le temps est dépassé
             selected.append(j)
-        ctx.stats["subsets_scanned"] = instance.m   # optional counters, saved in the CSV
-        # 6. return the 0-based indices of the chosen subsets.
-        #    No timing, no verification here: the runner does both.
+        ctx.stats["subsets_scanned"] = instance.m   # compteur facultatif
+        # 5. on renvoie les indices (0-based) des sous-ensembles choisis.
+        #    Ni chronométrage ni vérification ici : le runner s'en occupe.
         return selected

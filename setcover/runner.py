@@ -1,151 +1,146 @@
 """Exécution chronométrée + vérification, identique pour tous les algorithmes.
 
-Mesure du temps :
-  * ``time_s``  : temps réel (``time.perf_counter``) de l'appel à ``solve``
-    uniquement — chargement de l'instance et vérification exclus ;
-  * ``cpu_s``   : temps CPU du processus (``time.process_time``) sur le même
-    intervalle, moins sensible à la charge de la machine.
+Pour chaque exécution :
+  1. on lance l'algorithme en mesurant le temps ;
+  2. on vérifie que la solution couvre bien tout l'univers ;
+  3. on affiche le résultat.
 
-La limite de temps est **coopérative** : l'algorithme doit appeler
-``ctx.check_time()`` dans ses boucles. Si elle est dépassée, on renvoie la
-meilleure solution signalée via ``ctx.improve`` (statut ``timeout``).
-
-Chaque exécution produit un ``RunResult`` (une ligne de CSV).
+La limite de temps est "coopérative" : l'algorithme doit appeler
+``ctx.check_time()`` dans ses boucles. Si le temps est dépassé, on garde
+la meilleure solution trouvée jusque-là (``ctx.best``).
 """
 
-from __future__ import annotations
-
 import csv
-import gc
 import os
-import platform
 import time
-import traceback
-from dataclasses import asdict, dataclass, field
-from typing import Iterable
 
-from .algorithms import Algorithm, RunContext, TimeLimitExceeded
-from .instance import Instance
+from .algorithms import RunContext, TimeLimitExceeded
 from .solution import verify
 
 
-@dataclass
-class RunResult:
-    instance: str
-    n: int
-    m: int
-    density: float
-    algorithm: str
-    params: str
-    seed: int
-    status: str                  # ok | timeout | infeasible | error
-    cost: int | None             # coût vérifié (None si pas de solution)
-    feasible: bool
-    time_s: float
-    cpu_s: float
-    known: int | None = None     # valeur de référence (benchmarks)
-    known_status: str | None = None   # optimal | bks | None
-    gap_pct: float | None = None # 100 * (cost - known) / known
-    exact: bool = False          # l'algorithme est-il exact ?
-    stats: dict = field(default_factory=dict)
-    selected: list[int] = field(default_factory=list, repr=False)
-    error: str = ""
+def run(algorithm, instance, time_limit=None, seed=0, known=None, known_status=None):
+    """Lance ``algorithm`` sur ``instance`` et renvoie un dictionnaire de résultats.
 
-    def short(self) -> str:
-        cost = "-" if self.cost is None else self.cost
-        ref = ""
-        if self.known is not None:
-            ref = f"  réf={self.known} ({self.known_status})"
-            if self.gap_pct is not None:
-                ref += f"  écart={self.gap_pct:+.2f}%"
-        return (f"{self.instance:<28} {self.params:<32} {self.status:<10} "
-                f"coût={cost:<6} temps={self.time_s:9.4f}s{ref}")
-
-
-def run(algorithm: Algorithm, instance: Instance, time_limit: float | None = None,
-        seed: int = 0, known: int | None = None, known_status: str | None = None) -> RunResult:
-    """Lance ``algorithm`` sur ``instance``, chronomètre et vérifie la solution."""
+    * time_limit : limite en secondes (None = pas de limite)
+    * seed       : graine pour les algorithmes aléatoires
+    * known      : meilleure valeur connue pour cette instance (facultatif)
+    * known_status : "optimal" ou "bks" (facultatif, juste pour l'affichage)
+    """
     ctx = RunContext(time_limit=time_limit, seed=seed)
-    selected, status, error = None, "ok", ""
+    status = "ok"
+    error = ""
 
-    gc.collect()                         # évite qu'un GC hérité fausse la mesure
-    t0, c0 = time.perf_counter(), time.process_time()
-    ctx._start = t0
+    # 1. Lancer l'algorithme en mesurant le temps
+    debut = time.perf_counter()
     try:
         selected = list(algorithm.solve(instance, ctx))
     except TimeLimitExceeded:
-        status, selected = "timeout", ctx.best
-    except Exception as exc:              # on garde la trace dans le CSV
-        status, error = "error", f"{type(exc).__name__}: {exc}"
+        status = "timeout"
+        selected = ctx.best             # meilleure solution trouvée avant la fin
+    except Exception as exc:
+        status = "error"
+        error = f"{type(exc).__name__}: {exc}"
         selected = ctx.best
-        traceback.print_exc()
-    t1, c1 = time.perf_counter(), time.process_time()
+    fin = time.perf_counter()
 
-    cost, feasible = None, False
+    # 2. Vérifier la solution (s'il y en a une)
+    cost = None
+    feasible = False
     if selected is not None:
-        v = verify(instance, selected)
-        feasible = v.feasible
+        verification = verify(instance, selected)
+        feasible = verification.feasible
         if feasible:
-            cost = v.cost
+            cost = verification.cost
         elif status == "ok":
-            status, error = "infeasible", v.message()
+            status = "infeasible"
+            error = verification.message()
 
-    gap = None
-    if cost is not None and known:
-        gap = round(100.0 * (cost - known) / known, 4)
-        if known_status == "optimal" and cost < known:
-            error = (error + " " if error else "") + "ATTENTION: coût < optimum connu"
+    # 3. Écart avec la meilleure valeur connue, en pourcentage
+    ecart = None
+    if cost is not None and known is not None:
+        ecart = 100.0 * (cost - known) / known
 
-    return RunResult(
-        instance=instance.name, n=instance.n, m=instance.m,
-        density=round(instance.density, 6),
-        algorithm=algorithm.name, params=algorithm.label, seed=seed,
-        status=status, cost=cost, feasible=feasible,
-        time_s=t1 - t0, cpu_s=c1 - c0,
-        known=known, known_status=known_status, gap_pct=gap,
-        exact=algorithm.exact, stats=dict(ctx.stats),
-        selected=sorted(selected) if selected else [], error=error,
-    )
+    return {
+        "instance": instance.name,
+        "n": instance.n,                # nombre d'éléments
+        "m": instance.m,                # nombre de sous-ensembles
+        "density": round(instance.density(), 6),
+        "algorithm": algorithm.name,
+        "exact": algorithm.exact,       # True si l'algorithme garantit l'optimum
+        "status": status,
+        "cost": cost,
+        "feasible": feasible,
+        "time_s": fin - debut,
+        "known": known,
+        "known_status": known_status,
+        "gap_pct": ecart,
+        "error": error,
+        "selected": selected,           # indices 0-based (None si aucune solution)
+        "stats": ctx.stats,             # compteurs de l'algorithme
+    }
 
 
-def run_many(algorithms: Iterable[Algorithm], instances: Iterable[tuple[Instance, int | None, str | None]],
-             repeats: int = 1, time_limit: float | None = None, base_seed: int = 0,
-             csv_path: str | None = None, verbose: bool = True) -> list[RunResult]:
-    """Produit cartésien algorithmes x instances x répétitions.
+def afficher(resultat):
+    """Affiche une ligne lisible pour un résultat renvoyé par ``run``."""
+    cout = resultat["cost"]
+    if cout is None:
+        cout = "-"
+    ligne = (f"{resultat['instance']:<28} {resultat['algorithm']:<24} "
+             f"{resultat['status']:<10} coût={cout:<6} temps={resultat['time_s']:.4f}s")
+    if resultat["known"] is not None:
+        ligne += f"  réf={resultat['known']}"
+        if resultat["known_status"] is not None:
+            ligne += f" ({resultat['known_status']})"
+        if resultat["gap_pct"] is not None:
+            ligne += f"  écart={resultat['gap_pct']:+.2f}%"
+    if resultat["error"] != "":
+        ligne += f"  ({resultat['error']})"
+    print(ligne)
 
-    ``instances`` : itérable de (instance, valeur connue, statut). Les
-    résultats sont ajoutés au CSV au fur et à mesure (rien n'est perdu si on
-    interrompt une longue campagne).
+
+def run_many(algorithms, instances, time_limit=None):
+    """Lance chaque algorithme sur chaque instance et affiche les résultats.
+
+    ``instances`` est une liste de triplets (instance, valeur connue, statut)
+    (valeur connue et statut peuvent être None).
+    Renvoie la liste de tous les résultats.
     """
-    algorithms = list(algorithms)
-    results = []
-    for inst, known, kstatus in instances:
-        for algo in algorithms:
-            for r in range(repeats):
-                res = run(algo, inst, time_limit=time_limit, seed=base_seed + r,
-                          known=known, known_status=kstatus)
-                results.append(res)
-                if verbose:
-                    print(res.short(), flush=True)
-                if csv_path:
-                    append_csv(res, csv_path)
-    return results
+    resultats = []
+    for instance, known, status in instances:
+        for algorithm in algorithms:
+            resultat = run(algorithm, instance, time_limit=time_limit,
+                           known=known, known_status=status)
+            afficher(resultat)
+            resultats.append(resultat)
+    return resultats
 
 
-CSV_FIELDS = ["instance", "n", "m", "density", "algorithm", "params", "seed", "status",
-              "cost", "feasible", "time_s", "cpu_s", "known", "known_status", "gap_pct",
-              "exact", "stats", "error", "machine"]
+CSV_COLONNES = ["instance", "n", "m", "density", "algorithm", "exact", "seed",
+                "status", "cost", "feasible", "time_s",
+                "known", "known_status", "gap_pct", "stats", "error"]
 
 
-def append_csv(result: RunResult, path: str) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    new = not os.path.exists(path)
-    row = asdict(result)
-    row.pop("selected")
-    row["stats"] = ";".join(f"{k}={v}" for k, v in row["stats"].items())
-    row["machine"] = f"{platform.system()}-{platform.machine()}|py{platform.python_version()}"
+def append_csv(resultat, path, seed=0):
+    """Ajoute une ligne au fichier CSV (l'en-tête est écrit si le fichier est nouveau)."""
+    dossier = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dossier, exist_ok=True)
+    nouveau = not os.path.exists(path)
+
+    ligne = {}
+    for colonne in CSV_COLONNES:
+        if colonne == "seed":
+            ligne[colonne] = seed
+        elif colonne == "stats":
+            # dictionnaire de compteurs -> texte "cle=valeur;cle=valeur"
+            morceaux = []
+            for cle in sorted(resultat["stats"]):
+                morceaux.append(f"{cle}={resultat['stats'][cle]}")
+            ligne[colonne] = ";".join(morceaux)
+        else:
+            ligne[colonne] = resultat[colonne]
+
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        if new:
-            w.writeheader()
-        w.writerow(row)
+        writer = csv.DictWriter(f, fieldnames=CSV_COLONNES)
+        if nouveau:
+            writer.writeheader()
+        writer.writerow(ligne)

@@ -12,55 +12,77 @@ Réparation (``repair=True``, par défaut) : après le tirage, chaque élément
 couvert par aucun sous-ensemble est ajouté à un sous-ensemble tiré au hasard,
 et chaque sous-ensemble vide reçoit un élément au hasard. L'instance est donc
 toujours faisable. La densité réelle est légèrement supérieure à ``density``
-quand celle-ci est très faible : utiliser ``instance.density`` pour la valeur
+quand celle-ci est très faible : utiliser ``instance.density()`` pour la valeur
 exacte dans les tableaux.
 """
 
-from __future__ import annotations
-
-import itertools
 import os
 import random
-from typing import Iterable, Iterator
 
 from .instance import Instance
 from .io import write_orlib
 
 
-def generate(n: int, m: int, density: float, seed: int = 0, repair: bool = True,
-             name: str | None = None) -> Instance:
+def generate(n, m, density, seed=0, repair=True, name=None):
     if n <= 0 or m <= 0:
         raise ValueError("n et m doivent être > 0")
-    if not 0.0 < density <= 1.0:
+    if density <= 0.0 or density > 1.0:
         raise ValueError("density doit être dans ]0, 1]")
 
-    rng = random.Random(seed)  # générateur local : aucun effet sur random global
-    subsets: list[set[int]] = [
-        {e for e in range(n) if rng.random() < density} for _ in range(m)
-    ]
+    # Générateur aléatoire propre à cette fonction : il n'affecte pas
+    # le module random global. Même graine => mêmes tirages.
+    rng = random.Random(seed)
+
+    # Pour chaque sous-ensemble, chaque élément est choisi avec
+    # une probabilité égale à density.
+    subsets = []
+    for j in range(m):
+        sous_ensemble = set()
+        for e in range(n):
+            if rng.random() < density:
+                sous_ensemble.add(e)
+        subsets.append(sous_ensemble)
 
     if repair:
-        covered = set().union(*subsets)
+        # 1. Les éléments couverts par aucun sous-ensemble
+        #    sont ajoutés à un sous-ensemble choisi au hasard.
+        covered = set()
+        for s in subsets:
+            covered = covered | s
         for e in range(n):
             if e not in covered:
-                subsets[rng.randrange(m)].add(e)
+                j = rng.randrange(m)
+                subsets[j].add(e)
+
+        # 2. Les sous-ensembles vides reçoivent un élément au hasard.
         for s in subsets:
-            if not s:
+            if len(s) == 0:
                 s.add(rng.randrange(n))
 
-    name = name or f"rand_n{n}_m{m}_p{density:g}_s{seed}"
-    return Instance(n=n, m=m, subsets=tuple(frozenset(s) for s in subsets), name=name)
+    if name is None:
+        name = f"rand_n{n}_m{m}_p{density:g}_s{seed}"
+    return Instance(n, subsets, name)
 
 
-def grid(ns: Iterable[int], ms: Iterable[int], densities: Iterable[float],
-         seeds: Iterable[int]) -> Iterator[Instance]:
-    """Toutes les combinaisons de paramètres (plan d'expérience complet)."""
-    for n, m, p, s in itertools.product(ns, ms, densities, seeds):
-        yield generate(n, m, p, s)
+def grid(ns, ms, densities, seeds):
+    """Toutes les combinaisons de paramètres (plan d'expérience complet).
+
+    Renvoie la liste des instances générées.
+    """
+    instances = []
+    for n in ns:
+        for m in ms:
+            for density in densities:
+                for seed in seeds:
+                    instances.append(generate(n, m, density, seed))
+    return instances
 
 
-def generate_to_dir(instances: Iterable[Instance], out_dir: str) -> list[str]:
-    """Écrit les instances au format OR-Library dans ``out_dir``."""
+def generate_to_dir(instances, out_dir):
+    """Écrit les instances au format OR-Library dans ``out_dir``.
+
+    Renvoie la liste des chemins des fichiers créés.
+    """
     os.makedirs(out_dir, exist_ok=True)
     paths = []
     for inst in instances:

@@ -12,6 +12,9 @@ only has to write the `solve` method of their own algorithm:
 - compare the result with the known optimum / best known solution;
 - write one CSV line per run, ready for plots and tables in the report.
 
+The code is deliberately written in simple Python (plain classes, explicit loops,
+no type annotations) so that every group member can read and explain it.
+
 Contents
 
 1. [Quick start](#1-quick-start)
@@ -33,21 +36,21 @@ Contents
 the **repository root** (the folder that contains `setcover/` and `USPC-instances/`).
 
 ```bash
-python -m setcover list                         # available algorithms and benchmark instances
-python -m setcover info E CYC6                  # characteristics of instances
-python -m setcover solve -a example E.1         # run the example algorithm on E.1
-python -m setcover bench -a example E CLR -t 60 # experiment campaign -> results/*.csv
-python -m unittest discover -s tests            # run the tests
+python3 -m setcover list                          # available algorithms and benchmark instances
+python3 -m setcover info E CYC6                   # characteristics of instances
+python3 -m setcover solve -a bruteforce STS9      # run the brute force on STS9
+python3 -m setcover bench -a example E CLR -t 60  # experiment campaign -> results/*.csv
+python3 -m unittest discover -s tests             # run the tests
 ```
 
 Output of `solve`:
 
 ```
-E.1      example     ok     coût=500   temps=   0.0001s  réf=5 (optimal)  écart=+9900.00%
+STS9      bruteforce      ok      coût=5      temps=0.0002s  réf=5 (optimal)  écart=+0.00%
 ```
 
-(`coût` = cost, `temps` = time, `réf` = reference value, `écart` = gap. The
-example algorithm takes all 500 subsets, hence the huge gap: it is only a demo.)
+(Console messages are in French: `coût` = cost, `temps` = time, `réf` = reference value,
+`écart` = gap.)
 
 ---
 
@@ -76,7 +79,7 @@ Small example used in the tests:
 
 ```python
 from setcover import Instance
-inst = Instance.from_subsets(6, [{0, 1, 2}, {2, 3}, {3, 4, 5}, {0, 5}])
+inst = Instance(6, [{0, 1, 2}, {2, 3}, {3, 4, 5}, {0, 5}], name="small")
 # n = 6, m = 4, optimal solution = [0, 2] (cost 2)
 ```
 
@@ -86,11 +89,12 @@ inst = Instance.from_subsets(6, [{0, 1, 2}, {2, 3}, {3, 4, 5}, {0, 5}])
 
 ```
 ALGO/
+├── README.md                 short presentation of the project
 ├── DOCUMENTATION.md          ← this file
 ├── USPC-instances/           benchmark files (OR-Library + Steiner)
 ├── setcover/                 the framework (Python package)
 │   ├── __init__.py           public API (what you import)
-│   ├── __main__.py           command line: python -m setcover ...
+│   ├── __main__.py           command line: python3 -m setcover ...
 │   ├── instance.py           Instance class
 │   ├── io.py                 read/write instance and solution files
 │   ├── generator.py          random instance generator
@@ -99,29 +103,30 @@ ALGO/
 │   ├── runner.py             timed + verified execution, CSV export
 │   └── algorithms/
 │       ├── __init__.py       imports every algorithm module (registration)
-│       ├── base.py           Algorithm interface, RunContext, registry
-│       └── example.py        AlgoExemple: minimal template, no logic
+│       ├── base.py           Algorithm class, RunContext, registry
+│       ├── example.py        AlgoExemple: minimal template, no logic
+│       └── bruteforce.py     exhaustive search
 ├── tests/test_base.py        unit tests
-├── results/                  CSV files written by `bench` (git-ignored)
-└── uscp/                     old code, kept for reference, not used
+├── doc/                      subject, group description, algorithm write-ups
+└── results/                  CSV files written by `bench` (git-ignored)
 ```
 
 How one run flows through the modules:
 
 ```
  file / benchmark name ──io.read_instance──► Instance ──────────────┐
- (n, m, density, seed) ──generator.generate─►   (read-only)          │
+ (n, m, density, seed) ──generator.generate─►                        │
                                                                     ▼
-             runner.run(algorithm, instance, time_limit, seed)
-               1. precompute shared data (instance.covering)
-               2. start timer
-               3. selected = algorithm.solve(instance, ctx)   ◄── your code
-               4. stop timer
-               5. solution.verify(instance, selected)
-               6. compare with benchmarks.KNOWN
+             runner.run(algorithm, instance, time_limit, seed, known)
+               1. start timer
+               2. selected = algorithm.solve(instance, ctx)   ◄── your code
+               3. stop timer
+               4. solution.verify(instance, selected)
+               5. gap with the reference value (benchmarks.KNOWN)
                                                                     │
                                                                     ▼
-                         RunResult ──► console line + CSV line (runner.append_csv)
+                result (dict) ──► console line (runner.afficher)
+                              └─► CSV line     (runner.append_csv)
 ```
 
 The key design rule: **an algorithm only computes a list of subsets.** Timing,
@@ -137,41 +142,40 @@ Everything below can be imported directly from the package:
 ```python
 from setcover import (Instance, read_instance, write_orlib, read_solution, write_solution,
                       generate, verify, is_cover, Algorithm, RunContext, register,
-                      get_algorithm, available, run, run_many, RunResult, benchmarks)
+                      get_algorithm, available, run, run_many, afficher, append_csv,
+                      benchmarks)
 ```
 
 ### 4.1 `instance.py` — `Instance`
 
-An immutable dataclass (`frozen=True`): algorithms cannot modify it by mistake, so
-all algorithms work on exactly the same data.
+```python
+Instance(n, subsets, name="unnamed")
+```
 
 | Attribute / method | Type | Description |
 |---|---|---|
-| `n`, `m` | `int` | number of elements, number of subsets |
+| `n`, `m` | `int` | number of elements, number of subsets (`m = len(subsets)`) |
 | `name` | `str` | display name (file name, benchmark name or generator parameters) |
-| `subsets[j]` | `frozenset[int]` | elements covered by subset `j` |
-| `covering[e]` | `tuple[int, ...]` | subsets that contain element `e` (sorted) |
-| `masks[j]` | `int` | bitmask of `subsets[j]`: bit `e` is 1 if `e ∈ S_j` |
-| `full_mask` | `int` | `(1 << n) - 1`, the whole universe as a bitmask |
-| `uncoverable` | `tuple[int, ...]` | elements covered by no subset |
-| `is_feasible` | `bool` | `True` if a cover exists (no uncoverable element) |
-| `nnz` | `int` | `Σ_j |S_j|` |
-| `density` | `float` | `nnz / (n·m)` |
+| `subsets[j]` | `set` | elements covered by subset `j` |
+| `covering[e]` | `list` | subsets that contain element `e` (increasing order) |
+| `uncoverable()` | `list` | elements covered by no subset |
+| `is_feasible()` | `bool` | `True` if a cover exists (no uncoverable element) |
+| `nnz()` | `int` | `Σ_j |S_j|` |
+| `density()` | `float` | `nnz / (n·m)` |
 | `stats()` | `dict` | n, m, density, min/avg/max subset size, min/max element frequency, feasibility |
-| `Instance.from_subsets(n, subsets, name)` | constructor | builds an instance from a list of sets (`m` inferred) |
 
-`covering`, `masks`, `full_mask`, `uncoverable` and `nnz` are **computed on first
-access and cached**. Choose the representation that suits your algorithm:
+`subsets` and `covering` are computed once in the constructor. Choose the
+representation that suits your algorithm:
 
 - `subsets` — natural for greedy-like methods (`len(S & uncovered)`);
 - `covering` — "which subsets can cover this element?" (branching in B&B, repair in
-  local search);
-- `masks` / `full_mask` — very fast union and test with Python integers (brute force,
-  dynamic programming over subsets of `U`). Building `masks` costs memory proportional
-  to `n·m/8` bytes, so avoid it on the largest instances (STS1215, STS2187, CYC11).
+  local search).
 
-The constructor validates the data: `len(subsets) == m` and every element in `[0, n-1]`,
-otherwise `ValueError`.
+The constructor checks that every element is in `[0, n-1]`, otherwise `ValueError`.
+
+**The instance must not be modified by an algorithm** (for example
+`instance.subsets[j].remove(e)`): it is shared by all runs, and `covering` would no
+longer match `subsets`. Work on copies (`set(instance.subsets[j])`) when needed.
 
 ### 4.2 `io.py` — files
 
@@ -181,7 +185,7 @@ otherwise `ValueError`.
 | `read_orlib(path, require_unicost=True, name=None)` | OR-Library format; raises `UnicostError` if a cost is not 1 |
 | `read_steiner(path, name=None)` | Steiner triple covering format |
 | `write_orlib(instance, path)` | writes the OR-Library format (used for generated instances) |
-| `write_solution(selected, path, comment="")` | writes a solution file (1-based) |
+| `write_solution(selected, path, comment="")` | writes a solution file (1-based, sorted, without duplicates) |
 | `read_solution(path)` | reads a solution file, returns 0-based indices, checks the announced cost |
 
 Formats are described in [section 7](#7-file-formats).
@@ -198,13 +202,13 @@ generate(n, m, density, seed=0, repair=True, name=None) -> Instance
 - `repair=True` (default) guarantees feasibility: every uncovered element is added to a
   random subset, and every empty subset receives one random element. For very small
   densities the real density is therefore a bit higher than `density`; report
-  `instance.density` (also in the CSV) rather than the parameter;
+  `instance.density()` (also in the CSV) rather than the parameter;
 - default name: `rand_n{n}_m{m}_p{density}_s{seed}`.
 
 Helpers:
 
 ```python
-grid(ns, ms, densities, seeds)         # iterator over every combination (full factorial design)
+grid(ns, ms, densities, seeds)         # list of instances for every combination (full factorial design)
 generate_to_dir(instances, out_dir)    # writes them as OR-Library files, returns the paths
 ```
 
@@ -223,16 +227,20 @@ The single, algorithm-independent judge. It returns a `Verification` with:
 | `uncovered` | elements not covered |
 | `invalid` | indices outside `[0, m-1]` (or not integers) |
 | `duplicates` | indices that appear more than once |
-| `redundant` | chosen subsets that could be removed without losing feasibility |
+| `redundant` | chosen subsets that could each be removed **alone** without losing feasibility |
 
 `bool(v)` is `v.feasible`; `v.message()` gives a readable summary.
+
+Note on `redundant`: each subset is tested on its own. Removing one redundant subset
+may make another one necessary, so the list is not "all the subsets you can remove
+at the same time".
 
 ```python
 is_cover(instance, selected) -> bool
 ```
 
-A fast bitmask check (no details) meant to be called **inside** algorithms that test
-many candidate solutions (brute force). It builds `instance.masks` on first call.
+A quick check (no details) that can be called inside algorithms. It assumes that all
+indices are valid.
 
 ### 4.5 `benchmarks.py` — benchmark catalogue
 
@@ -243,7 +251,7 @@ many candidate solutions (brute force). It builds `instance.masks` on first call
 | `list_benchmarks(families=None)` | list of `Benchmark` found on disk, sorted by family then size |
 | `find(name)` | one benchmark by short name, case-insensitive (`"cyc6"`, `"E.1"`) |
 | `known_value(name)` | `(value, status)` or `(None, None)` |
-| `short_name(path)` | file path → `(short name, family)`, e.g. `scpcyc06.txt` → `("CYC6", "CYC")` |
+| `short_name(path)` | file path → `(short name, family)`, e.g. `scpcyc06.txt` → `("CYC6", "CYC")`, or `None` |
 
 A `Benchmark` has `name`, `family`, `path`, `known`, `status` and a `load()` method.
 Families: `E`, `CLR`, `CYC`, `STS`. See [section 8](#8-benchmark-instances-and-reference-values).
@@ -251,20 +259,23 @@ Families: `E`, `CLR`, `CYC`, `STS`. See [section 8](#8-benchmark-instances-and-r
 ### 4.6 `algorithms/base.py` — the algorithm interface
 
 ```python
-class Algorithm(ABC):
-    name: ClassVar[str]          # command-line identifier, e.g. "bruteforce"
-    exact: ClassVar[bool]        # True if the method guarantees optimality
-    def __init__(self, **params) # parameters, stored in self.params
-    def solve(self, instance, ctx) -> Iterable[int]   # ABSTRACT: your code
-    label                        # "name(param=value,...)", used in the CSV
+class Algorithm:
+    name = "abstract"            # command-line identifier, e.g. "bruteforce"
+    exact = False                # True if the method guarantees optimality
+    def solve(self, instance, ctx)   # your code: returns a list of subset indices
 ```
+
+Algorithms have no parameters: one class = one method. A variant (for example another
+greedy rule) is written as another class with its own `name`.
+
+`solve` raises `NotImplementedError` if a subclass forgets to define it.
 
 Registry:
 
 | Function | Description |
 |---|---|
 | `@register` | class decorator, adds the class to `REGISTRY` under its `name` (error if the name is taken) |
-| `get_algorithm(name, **params)` | instantiates a registered algorithm |
+| `get_algorithm(name)` | creates an object of a registered algorithm; `KeyError` if the name is unknown |
 | `available()` | sorted list of registered names |
 
 `RunContext` — the second argument of `solve`:
@@ -275,27 +286,22 @@ Registry:
 | `ctx.seed` | the seed itself |
 | `ctx.time_limit` | seconds, or `None` |
 | `ctx.check_time()` | raises `TimeLimitExceeded` if the limit is exceeded; call it in long loops |
-| `ctx.elapsed()`, `ctx.time_left()` | seconds since start / seconds remaining (`inf` without limit) |
-| `ctx.improve(selected)` | records `selected` if it is better than the previous best; returns `True` if improved |
+| `ctx.elapsed()` | seconds since the start of the run |
+| `ctx.improve(selected)` | records `selected` if it is smaller than the previous best |
 | `ctx.best` | best solution recorded by `improve` (or `None`) |
-| `ctx.trace` | list of `(time, cost)` at each improvement, for convergence curves |
-| `ctx.stats` | free `dict` of counters (nodes, iterations…), copied into the CSV |
+| `ctx.stats` | free `dict` of counters (nodes, iterations…), written in the CSV |
 
 ### 4.7 `runner.py` — timed and verified execution
 
 ```python
-run(algorithm, instance, time_limit=None, seed=0, known=None, known_status=None) -> RunResult
+run(algorithm, instance, time_limit=None, seed=0, known=None, known_status=None) -> dict
 ```
 
-Steps: precompute `instance.covering` (so the first algorithm does not pay for it
-alone) → garbage collection → start the clocks → `algorithm.solve(instance, ctx)` →
-stop the clocks → `verify` → gap with the reference value.
+Steps: create the `RunContext` → start the clock → `algorithm.solve(instance, ctx)` →
+stop the clock → `verify` → gap with the reference value.
 
-Two clocks are measured on the `solve` call only (loading and verification excluded):
-
-- `time_s` — wall-clock time, `time.perf_counter()`;
-- `cpu_s` — CPU time of the process, `time.process_time()` (less sensitive to other
-  programs running on the machine).
+The time is measured on the `solve` call only (loading and verification excluded),
+with `time.perf_counter()` (wall-clock time).
 
 Final status:
 
@@ -304,29 +310,43 @@ Final status:
 | `ok` | `solve` returned a valid cover | the returned one |
 | `timeout` | `ctx.check_time()` raised | `ctx.best` (may be `None` → `cost` empty) |
 | `infeasible` | `solve` returned something that is not a cover | none (`cost` empty), reason in `error` |
-| `error` | `solve` raised another exception | `ctx.best`, traceback printed, message in `error` |
+| `error` | `solve` raised another exception | `ctx.best`, message in `error` |
 
-If an algorithm returns a cost **below** a proven optimum, `error` contains a warning:
-it means there is a bug (in the algorithm or in the reference value).
+The result is a dictionary with the keys:
 
-`RunResult` fields (one CSV line): `instance, n, m, density, algorithm, params, seed,
-status, cost, feasible, time_s, cpu_s, known, known_status, gap_pct, exact, stats,
-error`, plus `machine` in the CSV (OS, CPU architecture, Python version). `selected`
-is kept in memory but not written to the CSV. `gap_pct = 100·(cost − known)/known`.
+| Key | Meaning |
+|---|---|
+| `instance`, `n`, `m`, `density` | instance name and characteristics |
+| `algorithm`, `exact` | algorithm name and whether it is exact |
+| `status`, `error` | see the table above |
+| `cost`, `feasible` | cost of the verified solution (`None` if no valid solution) |
+| `time_s` | running time of `solve`, in seconds |
+| `known`, `known_status`, `gap_pct` | reference value, `"optimal"`/`"bks"`, `100·(cost − known)/known` |
+| `selected` | chosen subset indices (0-based), not written in the CSV |
+| `stats` | the `ctx.stats` counters |
+
+Other functions:
 
 ```python
-run_many(algorithms, instances, repeats=1, time_limit=None, base_seed=0,
-         csv_path=None, verbose=True) -> list[RunResult]
+afficher(result)                       # prints one readable line
+append_csv(result, path, seed=0)       # appends one line to a CSV file (header if new file)
+run_many(algorithms, instances, time_limit=None) -> list
 ```
 
-Runs every algorithm on every `(instance, known, status)` tuple, `repeats` times with
-seeds `base_seed, base_seed+1, …`. Each result is **appended to the CSV immediately**,
-so an interrupted campaign loses nothing.
+`run_many` runs every algorithm on every `(instance, known, status)` triple and prints
+each result. CSV columns, in order:
+
+```
+instance, n, m, density, algorithm, exact, seed, status, cost, feasible, time_s,
+known, known_status, gap_pct, stats, error
+```
+
+`stats` is written as `key=value;key=value`.
 
 ### 4.8 `__main__.py` — command line
 
 ```
-python -m setcover <command> [options]
+python3 -m setcover <command> [options]
 ```
 
 | Command | Options | Description |
@@ -336,7 +356,7 @@ python -m setcover <command> [options]
 | `solve -a ALGO INST...` | `-t SEC`, `--seed S`, `--show`, `-o PATH` | solve, verify, time; `--show` prints the chosen subsets; `-o` writes the solution (a folder if several instances) |
 | `verify INST SOLUTION` | — | checks a solution file; exit code 0 if valid, 1 otherwise |
 | `generate -n N.. -m M.. -p P..` | `--seed S`, `--count K`, `-o DIR` | writes every combination of n × m × p, K seeds each (default folder `generated/`) |
-| `bench -a ALGO [-a ALGO...] [INST...]` | `--random N M P`, `--count K`, `-r R`, `-t SEC`, `--seed S`, `-o CSV` | experiment campaign, CSV in `results/bench_<date>.csv` by default |
+| `bench -a ALGO [-a ALGO...] [INST...]` | `--random N M P`, `--count K`, `-r R`, `-t SEC`, `--seed S`, `-o CSV` | experiment campaign, CSV in `results/bench_<date>_<time>.csv` by default |
 
 `INST` can be:
 
@@ -346,8 +366,9 @@ python -m setcover <command> [options]
 - a whole family (`E`, `CLR`, `CYC`, `STS`);
 - a folder (every file inside, e.g. a folder created by `generate`).
 
-Algorithm parameters are given after a colon: `-a name:param1=value,param2=value`.
-Values are parsed as Python literals (`True`, `0.3`, `10`), otherwise kept as strings.
+In `bench`, each algorithm is run `-r R` times on each instance with seeds
+`--seed`, `--seed + 1`, …, and every run is **appended to the CSV immediately**, so an
+interrupted campaign loses nothing.
 
 ---
 
@@ -356,66 +377,45 @@ Values are parsed as Python literals (`True`, `0.3`, `10`), otherwise kept as st
 ### 5.1 The template: `AlgoExemple`
 
 `setcover/algorithms/example.py` contains **no set cover logic**. It returns every
-subset (always a valid cover, never a good one) and shows the six things every
-algorithm needs:
+subset (always a valid cover, never a good one) and shows what every algorithm needs:
 
 ```python
-from ..instance import Instance
-from .base import Algorithm, RunContext, register
+from .base import Algorithm, register
 
 
-@register                       # 1. register the class -> usable as "-a example"
-class AlgoExemple(Algorithm):   # 2. inherit from Algorithm
-    name = "example"            # 3. identifier used on the command line / in the CSV
-    exact = False               # 4. True only if the algorithm guarantees the optimum
+@register                       # 1. enregistre la classe -> utilisable avec "-a example"
+class AlgoExemple(Algorithm):   # 2. on hérite de Algorithm
+    name = "example"            # 3. identifiant en ligne de commande
+    exact = False               # 4. True seulement si l'optimum est garanti
 
-    def solve(self, instance: Instance, ctx: RunContext) -> list[int]:
-        # 5. receive the instance (read-only) and the run context
+    def solve(self, instance, ctx):
         selected = []
         for j in range(instance.m):
-            ctx.check_time()                 # stops cleanly if --time-limit is exceeded
+            ctx.check_time()            # s'arrête proprement si le temps est dépassé
             selected.append(j)
-        ctx.stats["subsets_scanned"] = instance.m   # optional counters, saved in the CSV
-        # 6. return the 0-based indices of the chosen subsets.
-        #    No timing, no verification here: the runner does both.
+        ctx.stats["subsets_scanned"] = instance.m   # compteur facultatif
+        # 5. on renvoie les indices (0-based) des sous-ensembles choisis.
+        #    Ni chronométrage ni vérification ici : le runner s'en occupe.
         return selected
 ```
 
 ### 5.2 Step by step
 
-1. Copy `setcover/algorithms/example.py` to a new file, e.g. `bruteforce.py`.
+1. Copy `setcover/algorithms/example.py` to a new file, e.g. `greedy.py`
+   (no dash in the name, otherwise Python cannot import it).
 2. Rename the class and change `name` (must be unique) and `exact`.
 3. Write `solve`. It must **return a list of 0-based subset indices**.
 4. Add one line in `setcover/algorithms/__init__.py`:
    ```python
-   from . import bruteforce  # noqa: F401
+   from . import greedy  # enregistre "greedy"
    ```
-5. Check: `python -m setcover list` shows it; `python -m setcover solve -a bruteforce STS9`.
+5. Check: `python3 -m setcover list` shows it; `python3 -m setcover solve -a greedy STS9`.
 
-### 5.3 Parameters
-
-Declare them in `__init__` and pass them to the parent so they appear in
-`self.params`, in `label` and in the CSV:
-
-```python
-@register
-class RandomizedGreedy(Algorithm):
-    name = "rgreedy"
-
-    def __init__(self, alpha: float = 0.3, iterations: int = 100):
-        super().__init__(alpha=alpha, iterations=iterations)
-        self.alpha, self.iterations = alpha, iterations
-```
-
-```bash
-python -m setcover bench -a rgreedy:alpha=0.1 -a rgreedy:alpha=0.5 E -r 10
-```
-
-### 5.4 Rules for fair and reproducible comparisons
+### 5.3 Rules for fair and reproducible comparisons
 
 - **Do not time or verify inside `solve`**: the runner does it the same way for everyone.
-- **Do not modify the instance** (it is immutable anyway) and do not read files in
-  `solve`: loading is not part of the measured time.
+- **Do not modify the instance** and do not read files in `solve`: loading is not part
+  of the measured time.
 - **Randomness only through `ctx.rng`** (never the global `random` module), so that
   `--seed` reproduces a run exactly and `-r 10` gives 10 different runs (seeds 0–9),
   needed for error bars (checklist item 6).
@@ -424,20 +424,20 @@ python -m setcover bench -a rgreedy:alpha=0.1 -a rgreedy:alpha=0.5 E -r 10
   a function from outside, so an algorithm that never calls it is never interrupted.
 - **Exact and anytime methods: call `ctx.improve(solution)` each time a better cover
   is found.** On timeout the runner returns that solution with status `timeout`, so
-  the report can show the best cost reached within the limit. `ctx.trace` keeps the
-  `(time, cost)` history for convergence plots.
+  the report can show the best cost reached within the limit.
 - **Put counters in `ctx.stats`** (`nodes`, `pruned`, `iterations`, `memo_size`…):
   they explain the running times in the report.
 - For an infeasible instance, raise `ValueError` (status `error`); the generator and
   all benchmarks are feasible, so this should not happen in practice.
 
-### 5.5 Example of a real method using the context
+### 5.4 Example of a real method: brute force
 
-Brute force, enumerating subsets by increasing size (first cover found is optimal):
+`setcover/algorithms/bruteforce.py` enumerates subsets by increasing size, so the
+first cover found is optimal (detailed explanation in `doc/BF-Defence2_v2.0.md`):
 
 ```python
-import itertools
-from ..solution import is_cover
+from itertools import combinations
+
 from .base import Algorithm, register
 
 
@@ -447,30 +447,42 @@ class BruteForce(Algorithm):
     exact = True
 
     def solve(self, instance, ctx):
-        tested = 0
-        for k in range(1, instance.m + 1):
-            for comb in itertools.combinations(range(instance.m), k):
+        m = instance.m
+        n = instance.n
+        nb_combinaisons = 0
+        for k in range(m + 1):
+            for indices in combinations(range(m), k):
                 ctx.check_time()
-                tested += 1
-                if is_cover(instance, comb):
-                    ctx.stats["tested"] = tested
-                    return list(comb)
+                nb_combinaisons += 1
+                covered = set()
+                for j in indices:
+                    covered.update(instance.subsets[j])
+                if len(covered) == n:
+                    ctx.stats["combinaisons_testees"] = nb_combinaisons
+                    ctx.stats["k_optimal"] = k
+                    return list(indices)
+            ctx.stats["combinaisons_testees"] = nb_combinaisons
+            ctx.stats["k_atteint"] = k
+        raise ValueError("instance infaisable : aucune combinaison ne couvre l'univers")
 ```
 
-### 5.6 Using it from Python (notebooks, plots)
+It solves STS9 and STS15 in less than 0.1 s, and hits any reasonable time limit on
+STS27 or E.1 (about 2.6·10^11 combinations for E.1).
+
+### 5.5 Using it from Python (notebooks, plots)
 
 ```python
-from setcover import generate, get_algorithm, run, benchmarks
+from setcover import generate, get_algorithm, run, afficher, benchmarks
 
-algo = get_algorithm("example")
+algo = get_algorithm("bruteforce")
 
-inst = generate(n=50, m=40, density=0.1, seed=3)
+inst = generate(n=20, m=15, density=0.2, seed=3)
 res = run(algo, inst, time_limit=10)
-print(res.status, res.cost, res.time_s, res.stats)
+print(res["status"], res["cost"], res["time_s"], res["stats"])
 
-b = benchmarks.find("CYC6")
+b = benchmarks.find("STS15")
 res = run(algo, b.load(), known=b.known, known_status=b.status)
-print(res.short())
+afficher(res)
 ```
 
 ---
@@ -481,10 +493,10 @@ print(res.short())
 
 ```bash
 # every algorithm on every family, 60 s per run
-python -m setcover bench -a bruteforce -a bnb -a dp -a greedy E CLR CYC STS -t 60 -o results/benchmarks.csv
+python3 -m setcover bench -a bruteforce -a greedy E CLR CYC STS -t 60 -o results/benchmarks.csv
 
 # stochastic methods: 10 repetitions (seeds 0..9) for mean / std / error bars
-python -m setcover bench -a rgreedy -a localsearch E CLR CYC STS -r 10 -t 60 -o results/stochastic.csv
+python3 -m setcover bench -a rgreedy E CLR CYC STS -r 10 -t 60 -o results/stochastic.csv
 ```
 
 ### 6.2 Random instances
@@ -492,14 +504,14 @@ python -m setcover bench -a rgreedy -a localsearch E CLR CYC STS -r 10 -t 60 -o 
 Either generate files first (they can be reused and shipped with the report):
 
 ```bash
-python -m setcover generate -n 10 15 20 25 30 -m 20 -p 0.1 0.2 0.3 --count 5 -o generated/small
-python -m setcover bench -a bruteforce -a dp -a example generated/small -t 30 -o results/small.csv
+python3 -m setcover generate -n 10 15 20 25 30 -m 20 -p 0.1 0.2 0.3 --count 5 -o generated/small
+python3 -m setcover bench -a bruteforce -a example generated/small -t 30 -o results/small.csv
 ```
 
 or generate on the fly (`--random N M P`, `--count` instances, seeds starting at `--seed`):
 
 ```bash
-python -m setcover bench -a example --random 100 80 0.1 --count 10
+python3 -m setcover bench -a example --random 100 80 0.1 --count 10
 ```
 
 Suggested axes, as listed in the subject: `n` (universe size), `m` (number of subsets),
@@ -508,11 +520,15 @@ several seeds per point.
 
 ### 6.3 Analysing the CSV
 
+The CSV files are written in `results/` (git-ignored). Copy the ones used in the report
+to a tracked folder so that the results can be reproduced (checklist item 8).
+
 ```python
 import pandas as pd
 df = pd.read_csv("results/benchmarks.csv")
 ok = df[df.status == "ok"]
-print(ok.groupby(["instance", "params"])[["cost", "time_s", "gap_pct"]].agg(["mean", "std"]))
+print(ok.groupby(["instance", "algorithm"])[["cost", "time_s", "gap_pct"]].agg(["mean", "std"]))
+print(ok.groupby(["n", "algorithm"])["time_s"].mean())     # time as a function of n
 ```
 
 Distinguish `known_status == "optimal"` (gap to the optimum) from `"bks"` (gap to the best
@@ -584,19 +600,27 @@ Reference values stored in `benchmarks.KNOWN`:
 | Instance | Value | Status |
 |---|---|---|
 | E.1 – E.5 | 5 | optimal |
-| CLR10 | 25 | optimal |
-| CLR11, CLR12, CLR13 | 23 | bks |
-| CYC6 / CYC7 | 60 / 144 | optimal |
-| CYC8 / CYC9 / CYC10 / CYC11 | 342 / 772 / 1798 / 4076 | bks |
+| CLR10 / CLR11 / CLR12 / CLR13 | 25 / 23 / 23 / 23 | bks |
+| CYC6 / CYC7 / CYC8 / CYC9 / CYC10 / CYC11 | 60 / 144 / 342 / 772 / 1798 / 3968 | bks |
 | STS9 / 15 / 27 / 45 / 81 / 135 / 243 | 5 / 9 / 18 / 30 / 61 / 103 / 198 | optimal |
-| STS405 / STS729 | 335 / 617 | bks |
-| STS1215, STS2187 | — | unknown |
+| STS405 / STS729 / STS1215 / STS2187 | 335 / 617 / 1063 / 1963 | bks |
 
-The STS values come from `USPC-instances/steiner-triple-covering/README`. **The E, CLR and
-CYC values must be checked against Kritter et al. 2019** (*On the optimal placement of
-cameras for surveillance and the underlying set cover problem*, Applied Soft Computing 74,
-the reference given by the instance repository) before being quoted in the report. To fix
-or add a value, edit the `KNOWN` dictionary in `setcover/benchmarks.py`.
+Sources:
+
+- **values**: tables of the solver github.com/pinam45/USCP, the solver that goes with the
+  instance repository (`code/common/include/common/data/instances/orlibrary/orlibrary.hpp`
+  and `.../instances/sts.hpp`, field `BKS`);
+- **"optimal" for STS9 to STS243, "bks" for STS405 and STS729**:
+  `USPC-instances/steiner-triple-covering/README` (Fulkerson et al. 1974, Ratliff 1979,
+  Mannino & Sassano 1995, Ostrowski et al. 2009–2010, Resende & Toso 2010);
+- **"optimal" for E.1 to E.5**: `USPC-instances/OR-Library/README`, which states that the
+  optimal value of each Beasley (1987) file is given in the paper;
+- **CLR and CYC**: no source marks them as optimal, so they are all `bks`.
+
+The instance repository points to Kritter et al. 2019 (*On the optimal placement of
+cameras for surveillance and the underlying set cover problem*, Applied Soft Computing
+74, DOI 10.1016/j.asoc.2018.10.025) for the state of the art; cite it in the report.
+To fix or add a value, edit the `KNOWN` dictionary in `setcover/benchmarks.py`.
 
 Only unicost instances are used, as the subject requires: `read_orlib` raises
 `UnicostError` on a weighted file.
@@ -606,20 +630,21 @@ Only unicost instances are used, as the subject requires: `read_orlib` raises
 ## 9. Tests
 
 ```bash
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_base.py` checks: derived representations of `Instance`, input validation,
-`verify` (valid, uncovered, invalid, duplicate, redundant subsets), file round-trip,
-generator reproducibility / feasibility / density, `AlgoExemple`, the runner (timeout
-returns the incumbent, invalid outputs are detected) and loading every benchmark file
-under 2 MB. It contains a tiny brute-force oracle (`brute_force_optimum`) that you can
-reuse to test an exact method on small random instances:
+`tests/test_base.py` checks: `Instance` (covering, density, input validation, uncoverable
+elements), `verify` (valid, uncovered, invalid, duplicate, redundant subsets), file
+round-trip, generator reproducibility / feasibility / density, `AlgoExemple`, the runner
+(timeout returns the best solution recorded, invalid outputs and exceptions are detected)
+and loading every benchmark file under 2 MB. It contains a tiny brute-force oracle
+(`brute_force_optimum`) that you can reuse to test an exact method on small random
+instances:
 
 ```python
 for seed in range(20):
     inst = generate(12, 10, 0.25, seed=seed)
-    assert run(get_algorithm("dp"), inst).cost == brute_force_optimum(inst)
+    assert run(get_algorithm("dp"), inst)["cost"] == brute_force_optimum(inst)
 ```
 
 Add a test file per algorithm in `tests/` (`test_<name>.py`); `discover` finds it.
@@ -642,12 +667,9 @@ root, not from inside `setcover/`.
 `error` column lists some uncovered elements. Use `verify(instance, selected).message()`
 while debugging.
 
-**Status `error` with "coût < optimum connu"** — the returned cost is below a proven
-optimum: there is a bug, or the reference value in `KNOWN` is wrong.
-
-**Memory error on big instances** — `instance.masks` creates `m` integers of `n` bits;
-avoid it (and `is_cover`) on STS1215, STS2187, CYC11, or keep bitmask methods for small
-instances, which is anyway where exact methods are usable.
+**A cost below a proven optimum** — there is a bug in the algorithm, or the reference
+value in `KNOWN` is wrong. Check the `gap_pct` column: it must never be negative when
+`known_status` is `optimal`.
 
 **Benchmarks not found** — the folder must be `<repo>/USPC-instances`, or set
 `export USCP_INSTANCES=/path/to/instances`.

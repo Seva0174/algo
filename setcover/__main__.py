@@ -10,14 +10,9 @@ Commandes :
 
 INST peut être un chemin de fichier, un nom de benchmark (E.1, CLR10, CYC6,
 STS27...) ou une famille entière (E, CLR, CYC, STS).
-
-Paramètres d'algorithme : ``-a nom:param1=valeur,param2=valeur``.
 """
 
-from __future__ import annotations
-
 import argparse
-import ast
 import os
 import sys
 import time
@@ -26,107 +21,133 @@ from . import benchmarks
 from .algorithms import available, get_algorithm
 from .generator import generate, generate_to_dir, grid
 from .io import read_instance, read_solution, write_solution
-from .runner import run, run_many
+from .runner import run, afficher, append_csv
 from .solution import verify
 
 
 # ---------------------------------------------------------------------- #
-def parse_algo(spec: str):
-    """'nom:k1=v1,k2=v2' -> Algorithm."""
-    name, _, args = spec.partition(":")
-    params = {}
-    for kv in filter(None, args.split(",")):
-        k, _, v = kv.partition("=")
-        try:
-            params[k] = ast.literal_eval(v)
-        except (ValueError, SyntaxError):
-            params[k] = v
-    return get_algorithm(name, **params)
-
-
-def resolve(specs: list[str]):
-    """Itère sur (instance, valeur connue, statut) pour chaque argument INST."""
+def resolve(specs):
+    """Renvoie la liste des triplets (instance, valeur connue, statut), un par instance trouvée."""
+    resultat = []
     for spec in specs:
         if os.path.isdir(spec):
-            for f in sorted(os.listdir(spec)):
-                p = os.path.join(spec, f)
-                if os.path.isfile(p):
-                    yield read_instance(p), None, None
+            # dossier : toutes les instances qu'il contient
+            for nom in sorted(os.listdir(spec)):
+                chemin = os.path.join(spec, nom)
+                if os.path.isfile(chemin):
+                    resultat.append((read_instance(chemin), None, None))
+
         elif os.path.isfile(spec):
-            info = benchmarks.short_name(spec)   # fichier de benchmark reconnu ?
-            name = info[0] if info else None
-            known, status = benchmarks.known_value(name) if name else (None, None)
-            yield read_instance(spec, name=name), known, status
+            # fichier : on regarde si c'est un benchmark connu
+            info = benchmarks.short_name(spec)
+            name = None
+            known, status = None, None
+            if info is not None:
+                name = info[0]
+                known, status = benchmarks.known_value(name)
+            resultat.append((read_instance(spec, name=name), known, status))
+
         elif spec.upper() in benchmarks.FAMILY_ORDER:
+            # famille entière (E, CLR, CYC, STS)
             for b in benchmarks.list_benchmarks([spec.upper()]):
-                yield b.load(), b.known, b.status
+                resultat.append((b.load(), b.known, b.status))
+
         else:
+            # nom court de benchmark (E.1, CYC6...)
             b = benchmarks.find(spec)
-            yield b.load(), b.known, b.status
+            resultat.append((b.load(), b.known, b.status))
+    return resultat
 
 
 # ---------------------------------------------------------------------- #
-def cmd_list(args) -> None:
+def cmd_list(args):
     print("Algorithmes :", ", ".join(available()))
     print(f"\nBenchmarks ({benchmarks.DEFAULT_DIR}) :")
     for b in benchmarks.list_benchmarks():
-        ref = f"{b.known} ({b.status})" if b.known else "inconnue"
+        if b.known is not None:
+            ref = f"{b.known} ({b.status})"
+        else:
+            ref = "inconnue"
         print(f"  {b.family:<4} {b.name:<8} réf={ref:<16} {os.path.relpath(b.path)}")
 
 
-def cmd_info(args) -> None:
+def cmd_info(args):
     for inst, known, status in resolve(args.instances):
         s = inst.stats()
-        ref = f"  réf={known} ({status})" if known else ""
+        ref = ""
+        if known is not None:
+            ref = f"  réf={known} ({status})"
         print(f"{s['name']:<28} n={s['n']:>7} m={s['m']:>7} densité={s['density']:.4f} "
               f"|S| moy={s['subset_size_avg']:>8} freq élt=[{s['elem_freq_min']},{s['elem_freq_max']}] "
               f"faisable={s['feasible']}{ref}")
 
 
-def cmd_solve(args) -> None:
-    algo = parse_algo(args.algorithm)
-    for inst, known, status in resolve(args.instances):
+def cmd_solve(args):
+    algo = get_algorithm(args.algorithm)
+    instances = resolve(args.instances)
+    for inst, known, status in instances:
         res = run(algo, inst, time_limit=args.time_limit, seed=args.seed,
                   known=known, known_status=status)
-        print(res.short())
-        if res.error:
-            print("   ", res.error)
-        if args.show:
-            print("    sous-ensembles (1-based) :", [j + 1 for j in res.selected])
-        if args.output and res.selected:
-            path = args.output if len(args.instances) == 1 else os.path.join(args.output, f"{inst.name}.sol")
-            write_solution(res.selected, path, comment=f"{inst.name} {algo.label} {res.time_s:.6f}s")
+        afficher(res)
+
+        selected = res["selected"]
+        if args.show and selected:
+            print("    sous-ensembles (1-based) :", [j + 1 for j in selected])
+
+        if args.output and selected:
+            if len(instances) == 1:
+                path = args.output
+            else:
+                path = os.path.join(args.output, f"{inst.name}.sol")
+            write_solution(selected, path,
+                           comment=f"{inst.name} {algo.name} {res['time_s']:.6f}s")
             print("    solution écrite dans", path)
 
 
-def cmd_verify(args) -> None:
-    inst, _, _ = next(resolve([args.instance]))
+def cmd_verify(args):
+    inst = resolve([args.instance])[0][0]
     v = verify(inst, read_solution(args.solution))
     print(v.message())
-    sys.exit(0 if v.feasible else 1)
+    if v.feasible:
+        sys.exit(0)
+    sys.exit(1)
 
 
-def cmd_generate(args) -> None:
+def cmd_generate(args):
     seeds = range(args.seed, args.seed + args.count)
     paths = generate_to_dir(grid(args.n, args.m, args.p, seeds), args.out)
     print(f"{len(paths)} instance(s) écrite(s) dans {args.out}")
 
 
-def cmd_bench(args) -> None:
-    algos = [parse_algo(a) for a in args.algorithm]
-    instances = list(resolve(args.instances))
+def cmd_bench(args):
+    algos = []
+    for spec in args.algorithm:
+        algos.append(get_algorithm(spec))
+
+    instances = resolve(args.instances)
     if args.random:
         n, m, p = args.random
-        seeds = range(args.seed, args.seed + args.count)
-        instances += [(generate(int(n), int(m), float(p), s), None, None) for s in seeds]
-    out = args.output or os.path.join("results", time.strftime("bench_%Y%m%d_%H%M%S.csv"))
-    run_many(algos, instances, repeats=args.repeats, time_limit=args.time_limit,
-             base_seed=args.seed, csv_path=out)
+        for seed in range(args.seed, args.seed + args.count):
+            instances.append((generate(int(n), int(m), float(p), seed), None, None))
+
+    if args.output:
+        out = args.output
+    else:
+        out = os.path.join("results", time.strftime("bench_%Y%m%d_%H%M%S.csv"))
+
+    for inst, known, status in instances:
+        for algo in algos:
+            for r in range(args.repeats):
+                seed = args.seed + r        # une graine différente par répétition
+                res = run(algo, inst, time_limit=args.time_limit, seed=seed,
+                          known=known, known_status=status)
+                afficher(res)
+                append_csv(res, out, seed=seed)
     print(f"\nRésultats ajoutés à {out}")
 
 
 # ---------------------------------------------------------------------- #
-def main(argv=None) -> None:
+def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m setcover", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
