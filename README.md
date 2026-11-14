@@ -48,6 +48,6 @@ section 5.
 | Milestone | Status |
 |---|---|
 | 1. Common tools (instances, generator, benchmarks, verification, runner, CSV) | Done |
-| 2. Brute force, greedy, dynamic programming, branch & bound | Brute force done, others to do |
+| 2. Brute force, greedy, dynamic programming, branch & bound | Brute force and classic greedy done, others to do |
 | 3. Randomized greedy, local search, other methods | To do |
 | 4–6. Experiments, report, defense | To do |

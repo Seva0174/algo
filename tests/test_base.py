@@ -113,6 +113,33 @@ class TestExample(unittest.TestCase):
             self.assertGreaterEqual(res["cost"], opt)
 
 
+class TestGreedy(unittest.TestCase):
+    def test_small(self):
+        res = run(get_algorithm("greedy"), SMALL)
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["cost"], 2)               # {0,1,2} puis {3,4,5}
+        self.assertEqual(res["selected"], [0, 2])
+
+    def test_uses_uncovered_gain_not_raw_size(self):
+        # Après avoir pris {0..5}, le sous-ensemble 1 est le plus GRAND restant
+        # mais n'apporte qu'un seul nouvel élément ; le sous-ensemble 2 en apporte 2.
+        inst = Instance(8, [{0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 6}, {6, 7}])
+        res = run(get_algorithm("greedy"), inst)
+        self.assertEqual(res["selected"], [0, 2])
+
+    def test_never_below_optimum(self):
+        for seed in range(15):
+            inst = generate(12, 10, 0.25, seed=seed)
+            opt = brute_force_optimum(inst)
+            res = run(get_algorithm("greedy"), inst)
+            self.assertTrue(res["feasible"])
+            self.assertGreaterEqual(res["cost"], opt)
+
+    def test_infeasible_instance(self):
+        res = run(get_algorithm("greedy"), Instance(3, [{0}, {1}]))
+        self.assertEqual(res["status"], "error")
+
+
 class TestRunner(unittest.TestCase):
     def test_timeout_returns_incumbent(self):
         class Slow(Algorithm):

@@ -8,7 +8,7 @@ from .base import (REGISTRY, Algorithm, RunContext, TimeLimitExceeded,
                     available, get_algorithm, register)
 from . import example  # enregistre "example"
 from . import bruteforce  # enregistre "bruteforce"
-# from . import greedy
+from . import greedy  # enregistre "greedy"
 # from . import branch_and_bound
 # from . import dynamic_programming
 
