@@ -9,6 +9,7 @@ from .base import (REGISTRY, Algorithm, RunContext, TimeLimitExceeded,
 from . import example  # enregistre "example"
 from . import bruteforce  # enregistre "bruteforce"
 from . import greedy  # enregistre "greedy"
+from . import greedy_random  # enregistre "greedy-random"
 # from . import branch_and_bound
 # from . import dynamic_programming
 
