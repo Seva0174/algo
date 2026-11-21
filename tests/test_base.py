@@ -11,7 +11,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from setcover import (Instance, Algorithm, generate, get_algorithm, is_cover, read_instance,
+from setcover import (Instance, Algorithm, aggregate, generate, get_algorithm, is_cover, read_instance,
                       read_solution, run, verify, write_orlib, write_solution)
 from setcover import benchmarks
 
@@ -196,6 +196,29 @@ class TestRunner(unittest.TestCase):
         res = run(Boom(), SMALL)
         self.assertEqual(res["status"], "error")
         self.assertIn("oups", res["error"])
+
+
+class TestAnalysis(unittest.TestCase):
+    def test_aggregate_family_and_algorithm(self):
+        rows = [
+            {"instance": "STS9", "algorithm": "greedy", "gap_pct": "10"},
+            {"instance": "STS15", "algorithm": "greedy", "gap_pct": "20"},
+        ]
+        result = aggregate(rows, value_field="gap_pct")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["family"], "STS")
+        self.assertEqual(result[0]["mean"], 15)
+
+    def test_svg_with_error_bars(self):
+        from setcover.analysis import svg_bar_chart
+        items = [{"family": "STS", "algorithm": "sa", "mean": 5.0, "std": 1.2}]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "chart.svg")
+            svg_bar_chart(items, "Test", "Écart (%)", path)
+            with open(path) as f:
+                content = f.read()
+            self.assertIn("<svg", content)
+            self.assertIn("stroke-width=\"2\"", content)
 
 
 @unittest.skipUnless(os.path.isdir(benchmarks.DEFAULT_DIR), "dossier USPC-instances absent")

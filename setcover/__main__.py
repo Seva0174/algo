@@ -7,6 +7,7 @@ Commandes :
   verify   INST SOLUTION        vérifie un fichier solution
   generate -n N -m M -p P ...   génère des instances aléatoires (format OR-Library)
   bench    -a ALGO [...]        campagne d'expériences -> CSV
+  analyze  CSV|SVG [...]        analyse des résultats (CSV) ou des solutions (SVG)
 
 INST peut être un chemin de fichier, un nom de benchmark (E.1, CLR10, CYC6,
 STS27...) ou une famille entière (E, CLR, CYC, STS).
@@ -23,6 +24,7 @@ from .generator import generate, generate_to_dir, grid
 from .io import read_instance, read_solution, write_solution
 from .runner import run, afficher, append_csv
 from .solution import verify
+from .analysis import analyze
 
 
 # ---------------------------------------------------------------------- #
@@ -146,7 +148,13 @@ def cmd_bench(args):
     print(f"\nRésultats ajoutés à {out}")
 
 
-# ---------------------------------------------------------------------- #
+def cmd_analyze(args):
+    result = analyze(args.csv, args.output)
+    print(f"{result['rows']} ligne(s) lue(s), {result['feasible_runs']} exécution(s) faisable(s)")
+    print("Résumé écrit dans", result["summary"])
+
+
+# ----------------------------------------------------------------------
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m setcover", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -192,6 +200,11 @@ def main(argv=None):
     q.add_argument("--seed", type=int, default=0)
     q.add_argument("-o", "--output", help="CSV de sortie (défaut : results/bench_<date>.csv)")
     q.set_defaults(func=cmd_bench)
+
+    q = sub.add_parser("analyze")
+    q.add_argument("csv", nargs="+", help="fichier(s) CSV produits par bench")
+    q.add_argument("-o", "--output", default="results/analysis", help="dossier de sortie")
+    q.set_defaults(func=cmd_analyze)
 
     args = p.parse_args(argv)
     args.func(args)

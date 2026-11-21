@@ -23,8 +23,9 @@ from .solution import verify, is_cover
 from .algorithms import Algorithm, RunContext, register, get_algorithm, available
 from .runner import run, run_many, afficher, append_csv
 from . import benchmarks
+from .analysis import aggregate, analyze, read_csv, svg_bar_chart, write_summary
 
 __all__ = ["Instance", "read_instance", "write_orlib", "read_solution", "write_solution",
            "generate", "verify", "is_cover", "Algorithm", "RunContext", "register",
            "get_algorithm", "available", "run", "run_many", "afficher", "append_csv",
-           "benchmarks"]
+           "benchmarks", "aggregate", "analyze", "read_csv", "svg_bar_chart", "write_summary"]
