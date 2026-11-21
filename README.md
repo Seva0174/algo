@@ -43,11 +43,16 @@ To add an algorithm, copy `setcover/algorithms/example.py`, write its `solve` me
 import it in `setcover/algorithms/__init__.py`. See [DOCUMENTATION.md](DOCUMENTATION.md),
 section 5.
 
+## Report
+
+The report draft, including the introduction, protocol, preliminary results, analysis and
+references, is available in [doc/REPORT.md](doc/REPORT.md).
+
 ## Progress
 
 | Milestone | Status |
 |---|---|
 | 1. Common tools (instances, generator, benchmarks, verification, runner, CSV) | Done |
 | 2. Brute force, greedy, dynamic programming, branch & bound | Brute force and classic greedy done, others to do |
-| 3. Randomized greedy, local search, other methods | To do |
-| 4–6. Experiments, report, defense | To do |
+| 3. Randomized greedy, local search, other methods | Simulated annealing done |
+| 4–6. Experiments, report, defense | Charts and report draft done; final campaign and defense to do |
