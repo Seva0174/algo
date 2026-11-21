@@ -140,6 +140,29 @@ class TestGreedy(unittest.TestCase):
         self.assertEqual(res["status"], "error")
 
 
+class TestSimulatedAnnealing(unittest.TestCase):
+    def test_small(self):
+        res = run(get_algorithm("sa"), SMALL, seed=7)
+        self.assertEqual(res["status"], "ok")
+        self.assertTrue(res["feasible"])
+        self.assertLessEqual(res["cost"], SMALL.m)
+        self.assertIn("iterations", res["stats"])
+
+    def test_reproducible_seed(self):
+        a = run(get_algorithm("sa"), SMALL, seed=12)
+        b = run(get_algorithm("sa"), SMALL, seed=12)
+        self.assertEqual(a["selected"], b["selected"])
+        self.assertEqual(a["cost"], b["cost"])
+
+    def test_never_below_optimum(self):
+        for seed in range(15):
+            inst = generate(12, 10, 0.25, seed=seed)
+            opt = brute_force_optimum(inst)
+            res = run(get_algorithm("sa"), inst, seed=seed)
+            self.assertTrue(res["feasible"])
+            self.assertGreaterEqual(res["cost"], opt)
+
+
 class TestRunner(unittest.TestCase):
     def test_timeout_returns_incumbent(self):
         class Slow(Algorithm):
